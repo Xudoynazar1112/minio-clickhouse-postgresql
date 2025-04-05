@@ -1,58 +1,52 @@
 import psycopg2
-from clickhouse_driver import Client
 import time
 import logging
+from clickhouse_driver import Client
+from prometheus_client import Gauge, start_http_server
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-try:
-    pg_conn = psycopg2.connect(dbname="file_ingestion", user="postgres", password="password", host="localhost", port=5433)
-    logger.info("Connected to PostgreSQL")
-except psycopg2.Error as e:
-    logger.error(f"Failed to connect to PostgreSQL: {e}")
-    exit(1)
+postgres_gauge = Gauge('postgres_rows_fetched', 'Number of rows fetched from PostgreSQL')
+clickhouse_gauge = Gauge('clickhouse_rows_synced', 'Number of rows synced to ClickHouse')
+start_http_server(8001)
 
-try:
-    ch_client = Client(host="localhost", port=9009, user="default", password="")
-    logger.info("Connected to ClickHouse")
-except Exception as e:
-    logger.error(f"Failed to connect to ClickHouse: {e}")
-    exit(1)
+pg_conn = psycopg2.connect(dbname="file_ingestion", user="postgres", password="password", host="localhost", port=5433)
+clickhouse_client = Client(host='localhost', port=9009)
 
-def sync_to_clickhouse():
+def sync_data():
     while True:
         try:
             with pg_conn.cursor() as cur:
                 cur.execute(
-                    "SELECT file_id, user_id, upload_timestamp, size_bytes, status "
-                    "FROM files WHERE upload_timestamp > NOW() - INTERVAL '1 hour' AND synced = FALSE"
+                    "SELECT file_id, user_id, upload_timestamp, size_bytes, status, transcription, summary, category "
+                    "FROM musics WHERE upload_timestamp > NOW() - INTERVAL '1 hour' AND synced = FALSE"
                 )
                 rows = cur.fetchall()
+                postgres_gauge.set(len(rows))
                 logger.info(f"Fetched {len(rows)} rows from PostgreSQL")
+
                 if rows:
-                    ch_client.execute(
-                        "INSERT INTO file_stats (file_id, user_id, upload_timestamp, size_bytes, status) VALUES",
-                        [(str(row[0]), row[1], row[2], row[3], row[4]) for row in rows]
-                    )
-                    # Mark rows as synced
-                    file_ids = [str(row[0]) for row in rows]
+                    for row in rows:
+                        file_id, user_id, upload_timestamp, size_bytes, status, transcription, summary, category = row
+                        clickhouse_client.execute(
+                            "INSERT INTO music_states (file_id, user_id, upload_timestamp, size_bytes, status, transcription, summary, category) VALUES",
+                            [(file_id, user_id, upload_timestamp, size_bytes, status, transcription, summary, category)]
+                        )
                     cur.execute(
-                        "UPDATE files SET synced = TRUE WHERE file_id IN %s",
-                        (tuple(file_ids),)
+                        "UPDATE musics SET synced = TRUE WHERE file_id IN %s",
+                        (tuple(row[0] for row in rows),)
                     )
+                    pg_conn.commit()
+                    clickhouse_gauge.set(len(rows))
                     logger.info(f"Synced {len(rows)} rows to ClickHouse")
-            pg_conn.commit()
-        except psycopg2.Error as e:
-            logger.error(f"PostgreSQL error: {e}")
-            pg_conn.rollback()
         except Exception as e:
-            logger.error(f"ClickHouse error: {e}")
+            logger.error(f"Error syncing data: {e}")
         time.sleep(10)
 
 if __name__ == "__main__":
     try:
-        sync_to_clickhouse()
+        sync_data()
     except KeyboardInterrupt:
         logger.info("Shutting down sync.py")
         pg_conn.close()

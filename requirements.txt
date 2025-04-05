@@ -2,3 +2,13 @@ psycopg2-binary
 minio
 clickhouse-driver
 redis
+spleeter==2.4.0
+numpy==1.23.5
+tensorflow==2.9.3
+assemblyai
+nltk==3.9.1
+textblob
+typer==0.3.2
+python-dotenv
+tenacity
+prometheus-client
