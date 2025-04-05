@@ -53,7 +53,7 @@ Below is a placeholder for the architecture diagram. You can create one using a 
 
 Before running the project, ensure you have the following installed:
 - **Docker** and **Docker Compose**: For containerized deployment.
-- **Python 3.8+**: For running the scripts.
+- **Python 3.9+**: For running the scripts. (Tested python3.9)
 - **FFmpeg**: Required for Spleeter (audio processing).
 - **AssemblyAI API Key**: Required for transcription.
 
